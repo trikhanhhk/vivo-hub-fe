@@ -10,6 +10,8 @@ interface TimelineProps {
   onAddAudioSegment: (start: number, end: number) => void
   selectedAudioId: number | null
   onSelectAudio: (id: number | null) => void
+  currentTime?: number
+  onSeek?: (t: number) => void
 }
 
 const PIXELS_PER_SECOND = 50
@@ -29,6 +31,8 @@ export function Timeline({
   onAddAudioSegment,
   selectedAudioId,
   onSelectAudio,
+  currentTime = 0,
+  onSeek,
 }: TimelineProps) {
   const timelineRef = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState<{
@@ -123,13 +127,29 @@ export function Timeline({
       onMouseLeave={onMouseUp}
       ref={timelineRef}
     >
-      <div style={{ width: Math.max(totalWidth + 64, 400) }} className="min-h-0">
+      <div style={{ width: Math.max(totalWidth + 64, 400) }} className="relative min-h-0">
+        {/* ── Playhead ── */}
+        {currentTime > 0 && (
+          <div
+            className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-red-500/80"
+            style={{ left: currentTime * PIXELS_PER_SECOND }}
+          >
+            <div className="absolute -top-0 left-1/2 -translate-x-1/2 h-2 w-2 rounded-full bg-red-500" />
+          </div>
+        )}
         {/* ── Ruler ── */}
-        <div className="relative h-7 border-b border-surface-700 bg-surface-900">
+        <div
+          className="relative h-7 border-b border-surface-700 bg-surface-900 cursor-pointer"
+          onClick={(e) => {
+            if (!onSeek) return
+            const rect = e.currentTarget.getBoundingClientRect()
+            onSeek(xToTime(e.clientX - rect.left))
+          }}
+        >
           {ticks.map((t) => (
             <div
               key={t}
-              className="absolute top-0 flex flex-col items-center"
+              className="absolute top-0 flex flex-col items-center pointer-events-none"
               style={{ left: t * PIXELS_PER_SECOND }}
             >
               <div className="h-3 w-px bg-surface-600" />

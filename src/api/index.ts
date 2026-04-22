@@ -6,6 +6,7 @@ import type {
   MergeAudioRequest,
   Project,
   TtsAudio,
+  UploadVideoResponse,
 } from '../types'
 
 const BASE_URL = '/api'
@@ -38,7 +39,22 @@ export const projectsApi = {
     request<Project>(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: (id: number) =>
     request<null>(`/projects/${id}`, { method: 'DELETE' }),
+  uploadVideo: async (id: number, file: File): Promise<ApiResponse<UploadVideoResponse>> => {
+    const form = new FormData()
+    form.append('video', file)
+    const res = await fetch(`${BASE_URL}/projects/${id}/upload-video`, {
+      method: 'POST',
+      body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }))
+      throw new Error(err?.message ?? res.statusText)
+    }
+    return res.json()
+  },
+  videoStreamUrl: (id: number) => `${BASE_URL}/projects/${id}/video`,
 }
+
 
 // ─── TTS Audio ────────────────────────────────────────────────────────────────
 

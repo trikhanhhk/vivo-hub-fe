@@ -1,12 +1,14 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Upload, Trash2, Play, Layers,
-  FileVideo, Music, ChevronRight, Pencil, Download,
+  FileVideo, Music, ChevronRight, Pencil, Download, Clock,
 } from 'lucide-react'
 import { Button, Input, Textarea, Modal, PageLoader, ErrorMessage, StatusBadge } from '../../components/ui'
+import { VideoPlayer, type VideoPlayerHandle } from '../../components/VideoPlayer'
 import { Timeline } from './Timeline'
-import { useProject, useUpdateProject, useMergeAudio, useMergeJob } from '../../hooks/useApi'
+import { useProject, useUpdateProject, useMergeAudio, useMergeJob, useUploadVideo } from '../../hooks/useApi'
+import { projectsApi } from '../../api'
 
 import type { ProjectSegment, CreateProjectSegmentRequest } from '../../types'
 
@@ -24,16 +26,30 @@ function calcDuration(segs: ProjectSegment[]) {
 // ─── VideoSegmentPanel ────────────────────────────────────────────────────────
 
 function VideoSegmentPanel({
+  projectId,
   segments,
   onAdd,
   onRemove,
+  onVideoUploaded,
 }: {
+  projectId: number
   segments: ProjectSegment[]
   onAdd: (url: string) => void
   onRemove: (id: number) => void
+  onVideoUploaded: () => void
 }) {
   const [urlInput, setUrlInput] = useState('')
   const [addOpen, setAddOpen] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const uploadMutation = useUploadVideo(projectId)
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    await uploadMutation.mutateAsync(file)
+    onVideoUploaded()
+    e.target.value = ''
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -50,6 +66,31 @@ function VideoSegmentPanel({
         >
           Add
         </Button>
+      </div>
+
+      {/* Upload video button */}
+      <div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="video/*"
+          className="hidden"
+          onChange={handleFileChange}
+        />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploadMutation.isPending}
+          className="flex w-full items-center gap-2 rounded-lg border border-dashed border-surface-600 p-3 text-xs text-surface-400 hover:border-blue-500/60 hover:text-blue-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Upload className="size-4 shrink-0" />
+          {uploadMutation.isPending ? 'Uploading…' : 'Upload project video'}
+        </button>
+        {uploadMutation.isError && (
+          <p className="mt-1 text-[10px] text-red-400">{(uploadMutation.error as Error).message}</p>
+        )}
+        {uploadMutation.isSuccess && (
+          <p className="mt-1 text-[10px] text-green-400">Video uploaded successfully</p>
+        )}
       </div>
 
       {segments.length === 0 ? (
@@ -86,7 +127,7 @@ function VideoSegmentPanel({
       <Modal
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        title="Add Video Clip"
+        title="Add Video Clip (by URL)"
         size="sm"
         footer={
           <>
@@ -113,10 +154,6 @@ function VideoSegmentPanel({
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
           />
-          <div className="flex items-center gap-2 rounded-lg border border-dashed border-surface-600 p-4 text-center">
-            <Upload className="size-5 text-surface-500 mx-auto" />
-            <span className="text-xs text-surface-400">Upload coming soon</span>
-          </div>
         </div>
       </Modal>
     </div>
@@ -129,10 +166,16 @@ function AudioSegmentPanel({
   segment,
   onUpdate,
   onRemove,
+  videoCurrentTime,
+  onCaptureStart,
+  onCaptureEnd,
 }: {
   segment: ProjectSegment | null
   onUpdate: (id: number, text: string) => void
   onRemove: (id: number) => void
+  videoCurrentTime: number
+  onCaptureStart: (t: number) => void
+  onCaptureEnd: (t: number) => void
 }) {
   const [text, setText] = useState(segment?.text ?? '')
   const [saved, setSaved] = useState(false)
@@ -153,16 +196,40 @@ function AudioSegmentPanel({
         <Music className="size-4 text-brand-400" />
         Audio Segment
       </div>
+
+      {/* Timecodes + frame-capture */}
       <div className="rounded-lg border border-surface-700 bg-surface-800 p-3 text-xs text-surface-400 grid grid-cols-2 gap-2">
         <div>
           <span className="text-surface-500">Start</span>
           <p className="text-surface-200 font-mono">{segment.start_time.toFixed(2)}s</p>
+          <button
+            className="mt-1 flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+            onClick={() => onCaptureStart(videoCurrentTime)}
+            title="Set start to current video position"
+          >
+            <Clock className="size-3" />⇤ Set Start
+          </button>
         </div>
         <div>
           <span className="text-surface-500">End</span>
           <p className="text-surface-200 font-mono">{segment.end_time.toFixed(2)}s</p>
+          <button
+            className="mt-1 flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+            onClick={() => onCaptureEnd(videoCurrentTime)}
+            title="Set end to current video position"
+          >
+            Set End ⇥<Clock className="size-3" />
+          </button>
         </div>
       </div>
+
+      {/* Current video position badge */}
+      <div className="flex items-center gap-1.5 text-[10px] text-surface-400">
+        <Clock className="size-3 text-surface-500" />
+        <span>Video position:</span>
+        <span className="font-mono text-surface-200">{videoCurrentTime.toFixed(2)}s</span>
+      </div>
+
       <Textarea
         label="TTS Text"
         placeholder="Enter text to be spoken..."
@@ -227,6 +294,11 @@ export function ProjectEditorPage() {
   const updateMutation = useUpdateProject(projectId)
   const mergeAudioMutation = useMergeAudio()
 
+  // Video player
+  const videoRef = useRef<VideoPlayerHandle>(null)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [videoDuration, setVideoDuration] = useState(0)
+
   // Local segment state (mirrors project, allows live edits before saving)
   const [videoSegs, setVideoSegs] = useState<ProjectSegment[]>([])
   const [audioSegs, setAudioSegs] = useState<ProjectSegment[]>([])
@@ -244,7 +316,7 @@ export function ProjectEditorPage() {
 
   const selectedAudio = audioSegs.find((s) => s.id === selectedAudioId) ?? null
 
-  const duration = calcDuration(videoSegs)
+  const duration = videoDuration || calcDuration(videoSegs)
 
   // ─── Video handlers ──────────────────────────────────────────────────────
 
@@ -307,6 +379,30 @@ export function ProjectEditorPage() {
     setSelectedAudioId(null)
   }, [])
 
+  // ─── Frame-capture handlers ───────────────────────────────────────────────
+
+  const handleCaptureStart = useCallback((t: number) => {
+    if (selectedAudioId === null) return
+    setAudioSegs((prev) =>
+      prev.map((s) => {
+        if (s.id !== selectedAudioId) return s
+        const newStart = +Math.min(t, s.end_time - 0.1).toFixed(2)
+        return { ...s, start_time: newStart }
+      }),
+    )
+  }, [selectedAudioId])
+
+  const handleCaptureEnd = useCallback((t: number) => {
+    if (selectedAudioId === null) return
+    setAudioSegs((prev) =>
+      prev.map((s) => {
+        if (s.id !== selectedAudioId) return s
+        const newEnd = +Math.max(t, s.start_time + 0.1).toFixed(2)
+        return { ...s, end_time: newEnd }
+      }),
+    )
+  }, [selectedAudioId])
+
   // ─── Save project ─────────────────────────────────────────────────────────
 
   async function handleSave() {
@@ -354,6 +450,8 @@ export function ProjectEditorPage() {
   if (isLoading) return <PageLoader />
   if (error) return <div className="p-6"><ErrorMessage message={error.message} /></div>
   if (!project) return null
+
+  const videoStreamUrl = projectsApi.videoStreamUrl(projectId)
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-surface-950">
@@ -404,9 +502,11 @@ export function ProjectEditorPage() {
         {/* Left panel – properties */}
         <aside className="flex w-64 shrink-0 flex-col gap-4 overflow-y-auto border-r border-surface-800 bg-surface-900 p-4">
           <VideoSegmentPanel
+            projectId={projectId}
             segments={videoSegs}
             onAdd={handleAddVideo}
             onRemove={handleRemoveVideo}
+            onVideoUploaded={() => setInitialized(false)}
           />
 
           <div className="h-px bg-surface-800" />
@@ -415,6 +515,9 @@ export function ProjectEditorPage() {
             segment={selectedAudio}
             onUpdate={handleUpdateAudioText}
             onRemove={handleRemoveAudio}
+            videoCurrentTime={currentTime}
+            onCaptureStart={handleCaptureStart}
+            onCaptureEnd={handleCaptureEnd}
           />
 
           {mergeJobId && (
@@ -429,18 +532,19 @@ export function ProjectEditorPage() {
         <div className="flex flex-1 flex-col overflow-hidden">
           {/* Preview area */}
           <div className="flex flex-1 items-center justify-center bg-black overflow-hidden">
-            {project.final_url ? (
-              <video
-                key={project.final_url}
-                controls
+            {project.video_url || project.video_segments.length > 0 ? (
+              <VideoPlayer
+                ref={videoRef}
+                src={videoStreamUrl}
                 className="max-h-full max-w-full"
-                src={project.final_url}
+                onTimeUpdate={setCurrentTime}
+                onDurationChange={setVideoDuration}
               />
             ) : (
               <div className="flex flex-col items-center gap-3 text-surface-600">
                 <FileVideo className="size-16" />
-                <p className="text-sm">No preview available</p>
-                <p className="text-xs text-surface-700">Add video clips and save your project</p>
+                <p className="text-sm">No video uploaded yet</p>
+                <p className="text-xs text-surface-700">Upload a video using the panel on the left</p>
               </div>
             )}
           </div>
@@ -463,6 +567,8 @@ export function ProjectEditorPage() {
               onAddAudioSegment={handleAddAudioSegment}
               selectedAudioId={selectedAudioId}
               onSelectAudio={setSelectedAudioId}
+              currentTime={currentTime}
+              onSeek={(t) => videoRef.current?.seekTo(t)}
             />
           </div>
         </div>

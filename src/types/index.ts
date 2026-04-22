@@ -36,6 +36,10 @@ export interface CreateProjectRequest {
   video_segments?: CreateProjectSegmentRequest[]
 }
 
+export interface UploadVideoResponse {
+  video_url: string
+}
+
 export interface CreateProjectSegmentRequest {
   segment_index: number
   start_time: number

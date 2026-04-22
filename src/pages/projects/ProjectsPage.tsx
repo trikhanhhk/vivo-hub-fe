@@ -137,7 +137,7 @@ export function ProjectsPage() {
                       {new Date(project.created_at).toLocaleDateString()}
                     </div>
                     <div className="flex items-center gap-1 text-xs text-surface-500">
-                      <span>{project.video_segments.length} clips</span>
+                      <span>{project.video_segments?.length ?? 0} clips</span>
                     </div>
                   </div>
                 </div>

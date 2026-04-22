@@ -45,6 +45,16 @@ export function useUpdateProject(id: number) {
   })
 }
 
+export function useUploadVideo(projectId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => projectsApi.uploadVideo(projectId, file),
+    onSuccess: async () => {
+      await qc.refetchQueries({ queryKey: queryKeys.project(projectId) })
+    },
+  })
+}
+
 export function useDeleteProject() {
   const qc = useQueryClient()
   return useMutation({
